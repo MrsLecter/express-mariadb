@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS user_score_stats;
 DROP TABLE IF EXISTS scores;
 DROP TABLE IF EXISTS users;
 
@@ -15,4 +16,14 @@ CREATE TABLE scores (
   CONSTRAINT fk_scores_user
     FOREIGN KEY (user_id) REFERENCES users(id),
   INDEX idx_scores_user_id (user_id)
+);
+
+CREATE TABLE user_score_stats (
+  user_id BIGINT PRIMARY KEY,
+  total_score BIGINT NOT NULL DEFAULT 0,
+  scores_count INT NOT NULL DEFAULT 0,
+  last_activity DATETIME NOT NULL,
+  CONSTRAINT fk_user_score_stats_user
+    FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_user_score_stats_ranking (total_score DESC, user_id ASC)
 );

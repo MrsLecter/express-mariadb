@@ -30,6 +30,18 @@ async function ensureTables() {
       INDEX idx_scores_user_id (user_id)
     )
   `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_score_stats (
+      user_id BIGINT PRIMARY KEY,
+      total_score BIGINT NOT NULL DEFAULT 0,
+      scores_count INT NOT NULL DEFAULT 0,
+      last_activity DATETIME NOT NULL,
+      CONSTRAINT fk_user_score_stats_user
+        FOREIGN KEY (user_id) REFERENCES users(id),
+      INDEX idx_user_score_stats_ranking (total_score DESC, user_id ASC)
+    )
+  `);
 }
 
 async function seedUsers() {
@@ -74,24 +86,41 @@ async function seedScores() {
   }
 }
 
+async function buildUserScoreStats() {
+  await query(`
+    INSERT INTO user_score_stats (user_id, total_score, scores_count, last_activity)
+    SELECT
+      user_id,
+      SUM(value) AS total_score,
+      COUNT(*) AS scores_count,
+      MAX(created_at) AS last_activity
+    FROM scores
+    GROUP BY user_id
+  `);
+}
+
 async function main() {
   try {
-    console.log("Starting seed...");
-
+    console.log("creating tables");
     await ensureTables();
-    console.log("Tables ready");
 
+    console.log("clearing tables");
+    await query("DELETE FROM user_score_stats");
     await query("DELETE FROM scores");
     await query("DELETE FROM users");
     await query("ALTER TABLE users AUTO_INCREMENT = 1");
     await query("ALTER TABLE scores AUTO_INCREMENT = 1");
 
-    console.log("Tables cleared");
-
+    console.log("inserting users");
     await seedUsers();
+
+    console.log("inserting scores");
     await seedScores();
 
-    console.log("Seed completed");
+    console.log("building user_score_stats");
+    await buildUserScoreStats();
+
+    console.log("seed complete");
   } catch (error) {
     console.error("Seed failed:", error);
     process.exitCode = 1;
