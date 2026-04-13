@@ -7,6 +7,20 @@ function toJsonNumber(value: number | bigint) {
   return typeof value === "bigint" ? Number(value) : value;
 }
 
+function isMariaDbForeignKeyViolation(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const dbError = error as {
+    code?: string;
+    errno?: number;
+    sqlState?: string;
+  };
+
+  return dbError.code === "ER_NO_REFERENCED_ROW_2" && dbError.errno === 1452;
+}
+
 router.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -16,7 +30,7 @@ router.get("/leaderboard", async (_req, res) => {
     const leaderboard = (await query(
       `
         SELECT
-          RANK() OVER (ORDER BY uss.total_score DESC, uss.user_id ASC) AS rank,
+          DENSE_RANK() OVER (ORDER BY uss.total_score DESC) AS rank,
           u.username,
           uss.total_score,
           ROUND(uss.total_score / NULLIF(uss.scores_count, 0), 2) AS average_score,
@@ -93,13 +107,11 @@ router.get("/users/:id/rank", async (req, res) => {
 
     const ranks = (await query(
       `
-        SELECT COUNT(*) + 1 AS rank
+        SELECT COUNT(DISTINCT total_score) + 1 AS rank
         FROM user_score_stats
-        WHERE
-          total_score > ?
-          OR (total_score = ? AND user_id < ?)
+        WHERE total_score > ?
       `,
-      [user.total_score, user.total_score, Number(user.user_id)]
+      [user.total_score]
     )) as Array<{
       rank: bigint | number;
     }>;
@@ -141,64 +153,59 @@ router.post("/scores", async (req, res) => {
     return;
   }
 
-  try {
-    const users = (await query(
-      "SELECT id, username FROM users WHERE id = ?",
-      [user_id]
-    )) as Array<{ id: number; username: string }>;
+  const connection = await pool.getConnection();
 
-    if (users.length === 0) {
+  try {
+    const createdAt = new Date();
+
+    await connection.beginTransaction();
+
+    const insertResult = (await connection.query(
+      "INSERT INTO scores (user_id, value, created_at) VALUES (?, ?, ?)",
+      [user_id, value, createdAt]
+    )) as { insertId: bigint | number };
+
+    await connection.query(
+      `
+        INSERT INTO user_score_stats (
+          user_id,
+          total_score,
+          scores_count,
+          last_activity
+        )
+        VALUES (?, ?, 1, ?)
+        ON DUPLICATE KEY UPDATE
+          total_score = total_score + VALUES(total_score),
+          scores_count = scores_count + 1,
+          last_activity = GREATEST(last_activity, VALUES(last_activity))
+      `,
+      [user_id, value, createdAt]
+    );
+
+    await connection.commit();
+
+    res.status(201).json({
+      id: toJsonNumber(insertResult.insertId),
+      user_id,
+      value,
+      created_at: createdAt.toISOString(),
+    });
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      console.error("Failed to rollback score transaction:", rollbackError);
+    }
+
+    if (isMariaDbForeignKeyViolation(error)) {
       res.status(404).json({ error: "user not found" });
       return;
     }
 
-    const connection = await pool.getConnection();
-
-    try {
-      const createdAt = new Date();
-
-      await connection.beginTransaction();
-
-      const insertResult = (await connection.query(
-        "INSERT INTO scores (user_id, value, created_at) VALUES (?, ?, ?)",
-        [user_id, value, createdAt]
-      )) as { insertId: bigint | number };
-
-      await connection.query(
-        `
-          INSERT INTO user_score_stats (
-            user_id,
-            total_score,
-            scores_count,
-            last_activity
-          )
-          VALUES (?, ?, 1, ?)
-          ON DUPLICATE KEY UPDATE
-            total_score = total_score + VALUES(total_score),
-            scores_count = scores_count + 1,
-            last_activity = GREATEST(last_activity, VALUES(last_activity))
-        `,
-        [user_id, value, createdAt]
-      );
-
-      await connection.commit();
-
-      res.status(201).json({
-        id: toJsonNumber(insertResult.insertId),
-        user_id,
-        value,
-        created_at: createdAt.toISOString(),
-      });
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
-
-  } catch (error) {
     console.error("Failed to create score:", error);
     res.status(500).json({ error: "internal server error" });
+  } finally {
+    connection.release();
   }
 });
 
