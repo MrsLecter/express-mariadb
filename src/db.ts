@@ -8,6 +8,7 @@ type DatabaseConfig = {
   user: string;
   password: string;
   database: string;
+  connectionLimit: number;
 };
 
 function readRequiredEnv(name: string) {
@@ -23,9 +24,17 @@ function readRequiredEnv(name: string) {
 function loadDatabaseConfig(): DatabaseConfig {
   const portValue = readRequiredEnv("DB_PORT");
   const port = Number(portValue);
+  const connectionLimitValue = process.env.DB_CONNECTION_LIMIT ?? "1000";
+  const connectionLimit = Number(connectionLimitValue);
 
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("Environment variable DB_PORT must be a positive integer");
+  }
+
+  if (!Number.isInteger(connectionLimit) || connectionLimit <= 0) {
+    throw new Error(
+      "Environment variable DB_CONNECTION_LIMIT must be a positive integer"
+    );
   }
 
   return {
@@ -34,6 +43,7 @@ function loadDatabaseConfig(): DatabaseConfig {
     user: readRequiredEnv("DB_USER"),
     password: readRequiredEnv("DB_PASSWORD"),
     database: readRequiredEnv("DB_NAME"),
+    connectionLimit,
   };
 }
 
@@ -45,7 +55,7 @@ const pool = mariadb.createPool({
   user: databaseConfig.user,
   password: databaseConfig.password,
   database: databaseConfig.database,
-  connectionLimit: 5,
+  connectionLimit: databaseConfig.connectionLimit,
 });
 
 type DbConnection = mariadb.PoolConnection;
