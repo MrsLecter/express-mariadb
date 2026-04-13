@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { pool, query } from "./db";
 
 const USER_COUNT = 100000;
