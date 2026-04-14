@@ -22,6 +22,7 @@ async function upsertUserScoreStats(
   value: number,
   createdAt: Date
 ) {
+  // NOTE: the order in which the accounts are updated is not guaranteed, so we use GREATEST
   await connection.query(
     `
       INSERT INTO user_score_stats (
