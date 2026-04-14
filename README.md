@@ -23,6 +23,11 @@ We improve the data model: we create an intermediate table, user_score_stats. Th
 
 Further improvements:  As the load increases, a single database server will become a bottleneck because read and write operations are performed simultaneously. In other words, it is necessary to write to /scores and read from /leaderboard at the same time. Additionally, as the size of the user_stats table grows, queries with ORDER BY will become slower. Here, Redis can be used for fast reading of rankings, since it is assumed that the order of users in the ranking will not change rapidly or significantly over a short period of time. To reduce the write load, you can use queues and batch processing. Since you need to write to multiple locations at once, this will increase the load and response time, while a queue will allow you to load data gradually and smooth out load spikes.
 
+Next Steps
+1) If there is a high read load on the leaderboard, consider using Redis as a cache for the top results
+2) If write latency increases, consider using queues for asynchronous updates to the read model
+To test hypotheses about bottlenecks, use local k6 scenarios
+
 ## Running MariaDB Locally with Docker
 
 0. Set up `.env` using `.env.example`.
